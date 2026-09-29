@@ -1,0 +1,39 @@
+{
+  "flutter": {
+    "platforms": {
+      "android": {
+        "default": {
+          "projectId": "laundromatic-e12cd",
+          "appId": "1:81483281422:android:a6e4651746ebfe203df85f",
+          "fileOutput": "android/app/google-services.json"
+        }
+      },
+      "dart": {
+        "lib/firebase_options.dart": {
+          "projectId": "laundromatic-e12cd",
+          "configurations": {
+            "android": "1:81483281422:android:a6e4651746ebfe203df85f",
+            "ios": "1:81483281422:ios:1cac6ae33deadad73df85f",
+            "macos": "1:81483281422:ios:1cac6ae33deadad73df85f",
+            "web": "1:81483281422:web:f4c02857462066893df85f",
+            "windows": "1:81483281422:web:0beeb650f144e74d3df85f"
+          }
+        }
+      }
+    }
+  },
+  "functions": [
+    {
+      "source": "functions",
+      "codebase": "default",
+      "disallowLegacyRuntimeConfig": true,
+      "ignore": [
+        "node_modules",
+        ".git",
+        "firebase-debug.log",
+        "firebase-debug.*.log",
+        "*.local"
+      ]
+    }
+  ]
+}

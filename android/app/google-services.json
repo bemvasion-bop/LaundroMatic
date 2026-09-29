@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "81483281422",
+    "project_id": "laundromatic-e12cd",
+    "storage_bucket": "laundromatic-e12cd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:81483281422:android:a6e4651746ebfe203df85f",
+        "android_client_info": {
+          "package_name": "com.example.laundromatic"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD1wsK7uqj72CTH6Cr_Wm3kaVE7W-DlMus"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
