@@ -12,7 +12,20 @@
           "package_name": "com.example.laundromatic"
         }
       },
-      "oauth_client": [],
+      "oauth_client": [
+        {
+          "client_id": "81483281422-hgecd0o1r2fhprni1kfv4hl7780ne5tb.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.example.laundromatic",
+            "certificate_hash": "18fa4db477b8d8ed159e230aa1045701f5ee78dd"
+          }
+        },
+        {
+          "client_id": "81483281422-4u1qovavpqud0m0mj84dj5167bqdhfeh.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
       "api_key": [
         {
           "current_key": "AIzaSyD1wsK7uqj72CTH6Cr_Wm3kaVE7W-DlMus"
@@ -20,7 +33,19 @@
       ],
       "services": {
         "appinvite_service": {
-          "other_platform_oauth_client": []
+          "other_platform_oauth_client": [
+            {
+              "client_id": "81483281422-4u1qovavpqud0m0mj84dj5167bqdhfeh.apps.googleusercontent.com",
+              "client_type": 3
+            },
+            {
+              "client_id": "81483281422-s6ng39ttrglnmvs27n9gvqf0o4k9dth9.apps.googleusercontent.com",
+              "client_type": 2,
+              "ios_info": {
+                "bundle_id": "com.example.laundromatic"
+              }
+            }
+          ]
         }
       }
     }

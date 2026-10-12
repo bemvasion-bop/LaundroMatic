@@ -1,991 +1,973 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 
+import '../controllers/theme_controller.dart';
+import '../models/inventory.dart';
 import '../models/order.dart';
 import '../models/service.dart';
-import '../models/inventory.dart';
 import '../services/inventory_service.dart';
 import '../services/order_service.dart';
 import '../services/service_service.dart';
-
-import 'customer_page.dart';
-import 'services_page.dart';
-import 'orders_page.dart';
 import 'inventory_page.dart';
+import 'inventory_transactions_page.dart';
+import 'more_page.dart';
+import 'orders_page.dart';
 
-class DashboardPage extends StatelessWidget {
+class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
 
   @override
+  State<DashboardPage> createState() => _DashboardPageState();
+}
+
+class _DashboardPageState extends State<DashboardPage> {
+  String _selectedRevenuePeriod = 'This Week';
+
+  final OrderService _orderService = OrderService();
+  final ServiceService _serviceService = ServiceService();
+  final InventoryService _inventoryService = InventoryService();
+
+  @override
   Widget build(BuildContext context) {
-    final OrderService orderService = OrderService();
-    final ServiceService serviceService = ServiceService();
-    final InventoryService inventoryService = InventoryService();
+    return ValueListenableBuilder<ThemeMode>(
+      valueListenable: ThemeController.themeModeNotifier,
+      builder: (context, themeMode, _) {
+        final colors = ThemeController.of(context);
+        final isDark = colors.isDark;
 
-    return Scaffold(
-      appBar: AppBar(),
-      body: StreamBuilder<List<LaundryOrder>>(
-        stream: orderService.getOrders(),
-        builder: (context, snapshot) {
-          // ============================================================
-          // LOADING
-          // ============================================================
+        final primaryBlue = colors.primary;
+        final primaryLight = colors.primaryLight;
+        final textDark = colors.textPrimary;
+        final textMuted = colors.textSecondary;
+        final cardBg = colors.cardBg;
+        final pageBg = colors.pageBg;
+        final borderColor = colors.border;
 
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(
-              child: CircularProgressIndicator(),
-            );
-          }
+        final successGreen = colors.successText;
+        final successBg = colors.successBg;
 
-          // ============================================================
-          // ERROR
-          // ============================================================
+        final warningOrange = colors.warningText;
+        final warningBg = colors.warningBg;
 
-          if (snapshot.hasError) {
-            return Center(
+        final errorRed = colors.errorText;
+        final errorBg = colors.errorBg;
+
+        final purpleColor = colors.purpleText;
+        final purpleBg = colors.purpleBg;
+
+    Widget dashboardContent = StreamBuilder<List<LaundryOrder>>(
+      stream: _orderService.getOrders(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return Scaffold(
+            backgroundColor: pageBg,
+            body: Center(child: CircularProgressIndicator(color: primaryBlue)),
+          );
+        }
+
+        if (snapshot.hasError) {
+          return Scaffold(
+            backgroundColor: pageBg,
+            body: Center(
               child: Text(
                 'Error loading dashboard:\n${snapshot.error}',
                 textAlign: TextAlign.center,
+                style: TextStyle(color: errorRed),
               ),
-            );
-          }
-
-          final List<LaundryOrder> orders = snapshot.data ?? [];
-
-          final DateTime now = DateTime.now();
-
-          final DateTime today = DateTime(
-            now.year,
-            now.month,
-            now.day,
+            ),
           );
+        }
 
-          // ============================================================
-          // TODAY'S ORDERS
-          // ============================================================
+        final List<LaundryOrder> orders = snapshot.data ?? [];
+        final DateTime now = DateTime.now();
+        final DateTime today = DateTime(now.year, now.month, now.day);
 
-          final int todaysOrders = orders.where((order) {
-            final DateTime? date = order.orderDate;
+        // Today's overview stats
+        final int todaysOrders = orders.where((order) {
+          final DateTime? date = order.orderDate;
+          if (date == null) return false;
+          return date.year == today.year &&
+              date.month == today.month &&
+              date.day == today.day;
+        }).length;
 
-            if (date == null) {
-              return false;
-            }
+        final int processingOrders = orders.where((order) {
+          return order.orderStatus == 'Processing';
+        }).length;
 
-            return date.year == today.year &&
-                date.month == today.month &&
-                date.day == today.day;
-          }).length;
+        final int readyForPickupOrders = orders.where((order) {
+          return order.orderStatus == 'Ready for Pickup';
+        }).length;
 
-          // ============================================================
-          // PROCESSING ORDERS
-          // ============================================================
+        final int pickedUpToday = orders.where((order) {
+          final DateTime? date = order.pickedUpDate;
+          if (date == null) return false;
+          return date.year == today.year &&
+              date.month == today.month &&
+              date.day == today.day;
+        }).length;
 
-          final int processingOrders = orders.where((order) {
-            return order.orderStatus == 'Processing';
-          }).length;
+        // Dynamic Revenue calculations based on _selectedRevenuePeriod
+        List<double> chartValues = [];
+        List<String> chartLabels = [];
+        String comparisonSubtitle = 'this week';
+        double calculatedTotalRevenue = 0.0;
+        int paidOrderCount = 0;
 
-          // ============================================================
-          // READY FOR PICKUP
-          // ============================================================
-
-          final int readyForPickupOrders = orders.where((order) {
-            return order.orderStatus == 'Ready for Pickup';
-          }).length;
-
-          // ============================================================
-          // PICKED UP TODAY
-          // ============================================================
-
-          final int pickedUpToday = orders.where((order) {
-            final DateTime? date = order.pickedUpDate;
-
-            if (date == null) {
-              return false;
-            }
-
-            return date.year == today.year &&
-                date.month == today.month &&
-                date.day == today.day;
-          }).length;
-
-          // ============================================================
-          // WEEKLY REVENUE
-          // ============================================================
-
-          final DateTime startOfWeek = today.subtract(
-            Duration(days: today.weekday - 1),
-          );
-
-          final List<double> weeklyRevenue = List<double>.filled(
-            7,
-            0,
-          );
+        if (_selectedRevenuePeriod == 'Today') {
+          chartLabels = ['Morning', 'Afternoon', 'Evening', 'Night'];
+          chartValues = List<double>.filled(4, 0.0);
+          comparisonSubtitle = 'today';
 
           for (final order in orders) {
-            if (order.paymentStatus != 'Paid') {
-              continue;
-            }
-
-            final DateTime? orderDate = order.orderDate;
-
-            if (orderDate == null) {
-              continue;
-            }
-
-            final DateTime orderDay = DateTime(
-              orderDate.year,
-              orderDate.month,
-              orderDate.day,
-            );
-
-            final int dayDifference =
-                orderDay.difference(startOfWeek).inDays;
-
-            if (dayDifference >= 0 && dayDifference < 7) {
-              weeklyRevenue[dayDifference] += order.totalAmount;
+            if (order.paymentStatus.toLowerCase().trim() != 'paid') continue;
+            final date =
+                order.orderDate ?? order.processingDate ?? order.pickedUpDate;
+            if (date == null) continue;
+            if (date.year == today.year &&
+                date.month == today.month &&
+                date.day == today.day) {
+              calculatedTotalRevenue += order.totalAmount;
+              paidOrderCount++;
+              if (date.hour < 12) {
+                chartValues[0] += order.totalAmount;
+              } else if (date.hour < 16) {
+                chartValues[1] += order.totalAmount;
+              } else if (date.hour < 20) {
+                chartValues[2] += order.totalAmount;
+              } else {
+                chartValues[3] += order.totalAmount;
+              }
             }
           }
+        } else if (_selectedRevenuePeriod == 'This Month') {
+          chartLabels = ['W1', 'W2', 'W3', 'W4'];
+          chartValues = List<double>.filled(4, 0.0);
+          comparisonSubtitle = 'this month';
 
-          final double totalWeeklyRevenue = weeklyRevenue.fold(
-            0,
-            (sum, amount) => sum + amount,
+          // 4-week (28-day) window ending today so month-boundary sales are accurately captured
+          final DateTime startOfPeriod =
+              today.subtract(const Duration(days: 28));
+
+          for (final order in orders) {
+            if (order.paymentStatus.toLowerCase().trim() != 'paid') continue;
+            final date =
+                order.orderDate ?? order.processingDate ?? order.pickedUpDate;
+            if (date == null) continue;
+
+            final orderDay = DateTime(date.year, date.month, date.day);
+            if (!orderDay.isBefore(startOfPeriod) &&
+                !orderDay.isAfter(today.add(const Duration(days: 1)))) {
+              calculatedTotalRevenue += order.totalAmount;
+              paidOrderCount++;
+              int daysAgo = today.difference(orderDay).inDays;
+              if (daysAgo < 0) daysAgo = 0;
+              // 0-6 days ago -> W4 (most recent week)
+              // 7-13 days ago -> W3
+              // 14-20 days ago -> W2
+              // 21-28 days ago -> W1
+              final weekIndex = (3 - (daysAgo / 7).floor()).clamp(0, 3);
+              chartValues[weekIndex] += order.totalAmount;
+            }
+          }
+        } else if (_selectedRevenuePeriod == 'This Year') {
+          chartLabels = [
+            'Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+            'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'
+          ];
+          chartValues = List<double>.filled(12, 0.0);
+          comparisonSubtitle = 'this year';
+
+          for (final order in orders) {
+            if (order.paymentStatus.toLowerCase().trim() != 'paid') continue;
+            final date =
+                order.orderDate ?? order.processingDate ?? order.pickedUpDate;
+            if (date == null) continue;
+            if (date.year == today.year) {
+              calculatedTotalRevenue += order.totalAmount;
+              paidOrderCount++;
+              final monthIndex = (date.month - 1).clamp(0, 11);
+              chartValues[monthIndex] += order.totalAmount;
+            }
+          }
+        } else {
+          // Default: "This Week"
+          chartLabels = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+          chartValues = List<double>.filled(7, 0.0);
+          comparisonSubtitle = 'this week';
+
+          final DateTime startOfWeek = DateTime(
+            today.year,
+            today.month,
+            today.day,
+          ).subtract(
+            Duration(days: today.weekday - 1),
           );
+          final DateTime endOfWeek = startOfWeek.add(const Duration(days: 7));
 
-          // ============================================================
-          // RESPONSIVE LAYOUT
-          // ============================================================
+          for (final order in orders) {
+            if (order.paymentStatus.toLowerCase().trim() != 'paid') continue;
+            final date =
+                order.orderDate ?? order.processingDate ?? order.pickedUpDate;
+            if (date == null) continue;
 
-          return LayoutBuilder(
-            builder: (context, constraints) {
-              final double screenWidth = constraints.maxWidth;
+            final orderDay = DateTime(date.year, date.month, date.day);
+            if (!orderDay.isBefore(startOfWeek) && orderDay.isBefore(endOfWeek)) {
+              final dayDifference =
+                  orderDay.difference(startOfWeek).inDays.clamp(0, 6);
+              chartValues[dayDifference] += order.totalAmount;
+              calculatedTotalRevenue += order.totalAmount;
+              paidOrderCount++;
+            }
+          }
+        }
 
-              int columns;
+        final displayTotalRevenue = calculatedTotalRevenue;
 
-              if (screenWidth < 600) {
-                columns = 2;
-              } else if (screenWidth < 900) {
-                columns = 3;
-              } else {
-                columns = 4;
-              }
+        double maxChartValue = 0;
+        for (final val in chartValues) {
+          if (val > maxChartValue) maxChartValue = val;
+        }
 
-              return Center(
-                child: ConstrainedBox(
-                  constraints: const BoxConstraints(
-                    maxWidth: 1200,
+        return Scaffold(
+          backgroundColor: pageBg,
+          body: SafeArea(
+            child: SingleChildScrollView(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  // Top Header
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Text(
+                                'Good morning, ',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: textDark,
+                                ),
+                              ),
+                              Text(
+                                'Jane!',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                  color: textDark,
+                                ),
+                              ),
+                              const SizedBox(width: 4),
+                              const Text(
+                                '👋',
+                                style: TextStyle(fontSize: 18),
+                              ),
+                            ],
+                          ),
+                          const SizedBox(height: 2),
+                          Text(
+                            _formatHeaderDate(now),
+                            style: TextStyle(
+                              fontSize: 13,
+                              color: textMuted,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Container(
+                        width: 44,
+                        height: 44,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: primaryLight,
+                          border: Border.all(color: borderColor, width: 1),
+                        ),
+                        child: Center(
+                          child: Icon(
+                            Icons.person_rounded,
+                            color: primaryBlue,
+                            size: 26,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(20),
+                  const SizedBox(height: 20),
+
+                  // Today's Overview Section Header
+                  Text(
+                    "Today's Overview",
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.bold,
+                      color: textDark,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+
+                  // 4 Stat Cards in 2x2 Grid (Interactive Quick Access)
+                  GridView.count(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 12,
+                    mainAxisSpacing: 12,
+                    childAspectRatio: 1.45,
+                    shrinkWrap: true,
+                    physics: const NeverScrollableScrollPhysics(),
+                    children: [
+                      _buildStatCard(
+                        icon: Icons.receipt_long_rounded,
+                        iconColor: primaryBlue,
+                        iconBg: primaryLight,
+                        title: "Today's Orders",
+                        value: todaysOrders.toString(),
+                        badgeText: "Tap to view orders",
+                        badgeColor: successGreen,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const OrdersPage(initialDate: 'Today'),
+                            ),
+                          );
+                        },
+                      ),
+                      _buildStatCard(
+                        icon: Icons.sync_rounded,
+                        iconColor: warningOrange,
+                        iconBg: warningBg,
+                        title: "Processing",
+                        value: processingOrders.toString(),
+                        badgeText: "Tap to view orders",
+                        badgeColor: warningOrange,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const OrdersPage(initialStatus: 'Processing'),
+                            ),
+                          );
+                        },
+                      ),
+                      _buildStatCard(
+                        icon: Icons.inventory_2_rounded,
+                        iconColor: successGreen,
+                        iconBg: successBg,
+                        title: "Ready for Pickup",
+                        value: readyForPickupOrders.toString(),
+                        badgeText: "Tap to view orders",
+                        badgeColor: successGreen,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const OrdersPage(initialStatus: 'Ready'),
+                            ),
+                          );
+                        },
+                      ),
+                      _buildStatCard(
+                        icon: Icons.check_circle_rounded,
+                        iconColor: purpleColor,
+                        iconBg: purpleBg,
+                        title: "Picked Up Today",
+                        value: pickedUpToday.toString(),
+                        badgeText: "Tap to view orders",
+                        badgeColor: purpleColor,
+                        onTap: () {
+                          Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  const OrdersPage(initialStatus: 'Completed'),
+                            ),
+                          );
+                        },
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Prominent Revenue Card Section
+                  Container(
+                    width: double.infinity,
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: cardBg,
+                      borderRadius: BorderRadius.circular(16),
+                      border: Border.all(color: borderColor),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.02),
+                          blurRadius: 10,
+                          offset: const Offset(0, 4),
+                        ),
+                      ],
+                    ),
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        // ==================================================
-                        // HEADER
-                        // ==================================================
-
-                        const Text(
-                          'Welcome to LaundroMatic!',
-                          style: TextStyle(
-                            fontSize: 26,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        const Text(
-                          'Manage your laundry operations from here.',
-                          style: TextStyle(
-                            fontSize: 16,
-                          ),
-                        ),
-
-                        const SizedBox(height: 30),
-
-                        // ==================================================
-                        // TODAY'S OVERVIEW
-                        // ==================================================
-
-                        const Text(
-                          "Today's Overview",
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-
-                        const SizedBox(height: 15),
-
-                        GridView.count(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: 15,
-                          mainAxisSpacing: 15,
-                          childAspectRatio: 1.35,
-                          shrinkWrap: true,
-                          physics:
-                              const NeverScrollableScrollPhysics(),
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            _StatCard(
-                              icon: Icons.receipt_long,
-                              title: "Today's Orders",
-                              value: todaysOrders.toString(),
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.bar_chart_rounded,
+                                  size: 22,
+                                  color: primaryBlue,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Revenue',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: textDark,
+                                  ),
+                                ),
+                              ],
                             ),
 
-                            _StatCard(
-                              icon: Icons.sync,
-                              title: 'Processing',
-                              value: processingOrders.toString(),
-                            ),
-
-                            _StatCard(
-                              icon: Icons.inventory_2,
-                              title: 'Ready for Pickup',
-                              value: readyForPickupOrders.toString(),
-                            ),
-
-                            _StatCard(
-                              icon: Icons.check_circle,
-                              title: 'Picked Up Today',
-                              value: pickedUpToday.toString(),
+                            // Interactive Functional Revenue Period Dropdown Selector
+                            PopupMenuButton<String>(
+                              onSelected: (selectedPeriod) {
+                                setState(() {
+                                  _selectedRevenuePeriod = selectedPeriod;
+                                });
+                              },
+                              shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                              itemBuilder: (context) => const [
+                                PopupMenuItem(
+                                  value: 'Today',
+                                  child: Text('Today'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'This Week',
+                                  child: Text('This Week'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'This Month',
+                                  child: Text('This Month'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'This Year',
+                                  child: Text('This Year'),
+                                ),
+                              ],
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 12,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: pageBg,
+                                  borderRadius: BorderRadius.circular(20),
+                                  border: Border.all(color: borderColor),
+                                ),
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      _selectedRevenuePeriod,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight: FontWeight.w600,
+                                        color: textDark,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Icon(
+                                      Icons.keyboard_arrow_down_rounded,
+                                      size: 16,
+                                      color: textMuted,
+                                    ),
+                                  ],
+                                ),
+                              ),
                             ),
                           ],
                         ),
-
-                        const SizedBox(height: 30),
-
-                        // ==================================================
-                        // ANALYTICS
-                        // ==================================================
-
-                        const Text(
-                          'Analytics',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
+                        const SizedBox(height: 12),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.baseline,
+                          textBaseline: TextBaseline.alphabetic,
+                          children: [
+                            Text(
+                              '₱${displayTotalRevenue.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                fontSize: 26,
+                                fontWeight: FontWeight.bold,
+                                color: textDark,
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                horizontal: 8,
+                                vertical: 3,
+                              ),
+                              decoration: BoxDecoration(
+                                color: paidOrderCount > 0
+                                    ? successBg
+                                    : const Color(0xFFF1F5F9),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                '$paidOrderCount paid',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: paidOrderCount > 0
+                                      ? successGreen
+                                      : textMuted,
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 6),
+                            Text(
+                              comparisonSubtitle,
+                              style: TextStyle(
+                                fontSize: 11,
+                                color: textMuted,
+                              ),
+                            ),
+                          ],
                         ),
-
-                        const SizedBox(height: 15),
-
-                        // ==================================================
-                        // REVENUE
-                        // ==================================================
-
-                        _RevenueCard(
-                          weeklyRevenue: weeklyRevenue,
-                          totalRevenue: totalWeeklyRevenue,
-                          startOfWeek: startOfWeek,
-                        ),
-
                         const SizedBox(height: 20),
 
-                        StreamBuilder<List<InventoryItem>>(
-                            stream: inventoryService.getInventory(),
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState == ConnectionState.waiting) {
-                                return const Card(
-                                  child: Padding(
-                                    padding: EdgeInsets.all(24),
-                                    child: Center(
-                                      child: CircularProgressIndicator(),
-                                    ),
-                                  ),
-                                );
-                              }
+                        // Dynamic Weekly/Monthly/Yearly Bar Chart (Guaranteed zero pixel overflow)
+                        SizedBox(
+                          height: 124,
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children:
+                                List.generate(chartLabels.length, (index) {
+                              final amount = chartValues[index];
+                              final isPeak = maxChartValue > 0 &&
+                                  amount == maxChartValue &&
+                                  amount > 0;
+                              final barHeight = maxChartValue > 0 && amount > 0
+                                  ? (amount / maxChartValue * 66)
+                                      .clamp(8.0, 66.0)
+                                  : 4.0;
+                              final barColor = isPeak
+                                  ? primaryBlue
+                                  : (amount > 0
+                                      ? const Color(0xFF93C5FD)
+                                      : const Color(0xFFE2E8F0));
 
-                              if (snapshot.hasError) {
-                                return Card(
-                                  child: Padding(
-                                    padding: const EdgeInsets.all(18),
-                                    child: Text(
-                                      'Unable to load inventory.',
-                                      style: TextStyle(
-                                        color: Colors.grey.shade700,
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              }
-
-                              final inventory = snapshot.data ?? [];
-
-                              final totalItems = inventory.length;
-
-                              final lowStockItems = inventory
-                                  .where((item) => item.status == 'Low Stock')
-                                  .length;
-
-                              final outOfStockItems = inventory
-                                  .where((item) => item.status == 'Out of Stock')
-                                  .length;
-
-                              return Card(
+                              return Expanded(
                                 child: Padding(
-                                  padding: const EdgeInsets.all(18),
+                                  padding: EdgeInsets.symmetric(
+                                    horizontal: chartLabels.length > 7 ? 2 : 3,
+                                  ),
                                   child: Column(
-                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisAlignment: MainAxisAlignment.end,
+                                    mainAxisSize: MainAxisSize.max,
                                     children: [
-                                      // TITLE
-                                      Row(
-                                        children: [
-                                          const Icon(
-                                            Icons.inventory_2_outlined,
-                                            size: 24,
-                                          ),
-                                          const SizedBox(width: 10),
-                                          const Text(
-                                            'Inventory Overview',
-                                            style: TextStyle(
-                                              fontSize: 18,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                        ],
+                                      SizedBox(
+                                        height: 18,
+                                        child: isPeak
+                                            ? Center(
+                                                child: FittedBox(
+                                                  fit: BoxFit.scaleDown,
+                                                  child: Text(
+                                                    amount >= 10000
+                                                        ? '₱${(amount / 1000).toStringAsFixed(1)}k'
+                                                        : '₱${amount.toStringAsFixed(0)}',
+                                                    style: TextStyle(
+                                                      fontSize: 9.5,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: primaryBlue,
+                                                    ),
+                                                  ),
+                                                ),
+                                              )
+                                            : const SizedBox.shrink(),
                                       ),
-
-                                      const SizedBox(height: 16),
-
-                                      // INVENTORY STATS
-                                      Row(
-                                        children: [
-                                          Expanded(
-                                            child: _InventoryStat(
-                                              icon: Icons.inventory_2,
-                                              title: 'Items',
-                                              value: totalItems.toString(),
+                                      const SizedBox(height: 2),
+                                      Container(
+                                        height: barHeight,
+                                        width: double.infinity,
+                                        decoration: BoxDecoration(
+                                          color: barColor,
+                                          borderRadius:
+                                              BorderRadius.circular(4),
+                                        ),
+                                      ),
+                                      const SizedBox(height: 6),
+                                      SizedBox(
+                                        height: 16,
+                                        child: Center(
+                                          child: FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            child: Text(
+                                              chartLabels[index],
+                                              maxLines: 1,
+                                              style: TextStyle(
+                                                fontSize:
+                                                    chartLabels.length > 7
+                                                        ? 9
+                                                        : 11,
+                                                fontWeight: isPeak
+                                                    ? FontWeight.bold
+                                                    : FontWeight.w500,
+                                                color: isPeak
+                                                    ? primaryBlue
+                                                    : textMuted,
+                                              ),
                                             ),
                                           ),
-
-                                          const SizedBox(width: 10),
-
-                                          Expanded(
-                                            child: _InventoryStat(
-                                              icon: Icons.warning_amber_rounded,
-                                              title: 'Low Stock',
-                                              value: lowStockItems.toString(),
-                                            ),
-                                          ),
-
-                                          const SizedBox(width: 10),
-
-                                          Expanded(
-                                            child: _InventoryStat(
-                                              icon: Icons.error_outline,
-                                              title: 'Out of Stock',
-                                              value: outOfStockItems.toString(),
-                                            ),
-                                          ),
-                                        ],
+                                        ),
                                       ),
                                     ],
                                   ),
                                 ),
                               );
-                            },
+                            }),
                           ),
-
-
-                        const SizedBox(height: 20),
-
-                        // ==================================================
-                        // ORDERS BY SERVICE
-                        // ==================================================
-
-                        StreamBuilder<List<LaundryService>>(
-                          stream: serviceService.getServices(),
-                          builder: (context, serviceSnapshot) {
-                            if (serviceSnapshot.connectionState ==
-                                ConnectionState.waiting) {
-                              return const Card(
-                                child: Padding(
-                                  padding: EdgeInsets.all(30),
-                                  child: Center(
-                                    child:
-                                        CircularProgressIndicator(),
-                                  ),
-                                ),
-                              );
-                            }
-
-                            if (serviceSnapshot.hasError) {
-                              return Card(
-                                child: Padding(
-                                  padding: const EdgeInsets.all(20),
-                                  child: Text(
-                                    'Error loading services:\n'
-                                    '${serviceSnapshot.error}',
-                                  ),
-                                ),
-                              );
-                            }
-
-                            final List<LaundryService> services =
-                                serviceSnapshot.data ?? [];
-
-                            return _OrdersByServiceCard(
-                              orders: orders,
-                              services: services,
-                            );
-                          },
-                        ),
-
-                        const SizedBox(height: 30),
-
-                        // ==================================================
-                        // QUICK ACCESS
-                        // ==================================================
-
-                        const Text(
-                          'Quick Access',
-                          style: TextStyle(
-                            fontSize: 22,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-
-                        const SizedBox(height: 15),
-
-                        GridView.count(
-                          crossAxisCount: columns,
-                          crossAxisSpacing: 15,
-                          mainAxisSpacing: 15,
-                          childAspectRatio: 1.15,
-                          shrinkWrap: true,
-                          physics:
-                              const NeverScrollableScrollPhysics(),
-                          children: [
-                            // ORDERS
-                            _DashboardCard(
-                              icon: Icons.receipt_long,
-                              title: 'Orders',
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const OrdersPage(),
-                                  ),
-                                );
-                              },
-                            ),
-
-                            // CUSTOMERS
-                            _DashboardCard(
-                              icon: Icons.people,
-                              title: 'Customers',
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const CustomerPage(),
-                                  ),
-                                );
-                              },
-                            ),
-
-                            // SERVICES
-                            _DashboardCard(
-                              icon: Icons.local_laundry_service,
-                              title: 'Services',
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const ServicesPage(),
-                                  ),
-                                );
-                              },
-                            ),
-
-                            // INVENTORY
-                            _DashboardCard(
-                              icon: Icons.inventory_2,
-                              title: 'Inventory',
-                              onTap: () {
-                                Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (context) =>
-                                        const InventoryPage(),
-                                  ),
-                                );
-                              },
-                            ),
-                          ],
                         ),
                       ],
                     ),
                   ),
+                  const SizedBox(height: 20),
+
+                  // Inventory Overview Section
+                  StreamBuilder<List<InventoryItem>>(
+                    stream: _inventoryService.getInventory(),
+                    builder: (context, invSnapshot) {
+                      final inventory = invSnapshot.data ?? [];
+                      final totalItems = inventory.length;
+                      final lowStockItems = inventory
+                          .where((item) => item.status == 'Low Stock')
+                          .length;
+                      final outOfStockItems = inventory
+                          .where((item) => item.status == 'Out of Stock')
+                          .length;
+
+                      return Container(
+                        padding: const EdgeInsets.all(16),
+                        decoration: BoxDecoration(
+                          color: cardBg,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: borderColor),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(
+                                  Icons.inventory_2_outlined,
+                                  size: 20,
+                                  color: textDark,
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  'Inventory Overview',
+                                  style: TextStyle(
+                                    fontSize: 16,
+                                    fontWeight: FontWeight.bold,
+                                    color: textDark,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 16),
+                            Row(
+                              children: [
+                                Expanded(
+                                  child: _buildInventoryBox(
+                                    icon: Icons.inventory_2_rounded,
+                                    iconColor: primaryBlue,
+                                    iconBg: primaryLight,
+                                    value: totalItems.toString(),
+                                    label: 'Items',
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const InventoryPage(
+                                                  initialFilter: 'All'),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _buildInventoryBox(
+                                    icon: Icons.warning_amber_rounded,
+                                    iconColor: warningOrange,
+                                    iconBg: warningBg,
+                                    value: lowStockItems.toString(),
+                                    label: 'Low Stock',
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const InventoryPage(
+                                                  initialFilter: 'Low Stock'),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: _buildInventoryBox(
+                                    icon: Icons.cancel_rounded,
+                                    iconColor: errorRed,
+                                    iconBg: errorBg,
+                                    value: outOfStockItems.toString(),
+                                    label: 'Out of Stock',
+                                    onTap: () {
+                                      Navigator.push(
+                                        context,
+                                        MaterialPageRoute(
+                                          builder: (context) =>
+                                              const InventoryPage(
+                                                  initialFilter:
+                                                      'Out of Stock'),
+                                        ),
+                                      );
+                                    },
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 20),
+
+                  // Orders by Service Card Section
+                  StreamBuilder<List<LaundryService>>(
+                    stream: _serviceService.getServices(),
+                    builder: (context, serviceSnapshot) {
+                      final List<LaundryService> services =
+                          serviceSnapshot.data ?? [];
+                      return _buildOrdersByServiceCard(
+                        orders: orders,
+                        services: services,
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 24),
+                ],
+              ),
+            ),
+          ),
+
+          // Bottom Navigation Bar
+          bottomNavigationBar: Container(
+            decoration: BoxDecoration(
+              color: cardBg,
+              border: Border(
+                top: BorderSide(color: borderColor, width: 1),
+              ),
+            ),
+            child: BottomNavigationBar(
+              currentIndex: 0, // Home tab is active
+              onTap: (index) {
+                if (index == 0) return;
+                if (index == 1) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(builder: (context) => const OrdersPage()),
+                  );
+                } else if (index == 2) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const InventoryPage()),
+                  );
+                } else if (index == 3) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) =>
+                            const InventoryTransactionsPage()),
+                  );
+                } else if (index == 4) {
+                  Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                        builder: (context) => const MorePage()),
+                  );
+                }
+              },
+              type: BottomNavigationBarType.fixed,
+              backgroundColor: cardBg,
+              selectedItemColor: primaryBlue,
+              unselectedItemColor: textMuted,
+              selectedLabelStyle: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 11,
+              ),
+              unselectedLabelStyle: const TextStyle(
+                fontWeight: FontWeight.normal,
+                fontSize: 11,
+              ),
+              elevation: 0,
+              items: const [
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.home_rounded),
+                  label: 'Home',
                 ),
-              );
-            },
-          );
-        },
-      ),
-    );
-  }
-}
-
-// ======================================================================
-// ORDERS BY SERVICE
-// ======================================================================
-
-class _OrdersByServiceCard extends StatelessWidget {
-  final List<LaundryOrder> orders;
-  final List<LaundryService> services;
-
-  const _OrdersByServiceCard({
-    required this.orders,
-    required this.services,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final Map<String, int> serviceCounts = {};
-
-    // Count orders for each service.
-    for (final service in services) {
-      serviceCounts[service.serviceId] = 0;
-    }
-
-    for (final order in orders) {
-      if (serviceCounts.containsKey(order.serviceId)) {
-        serviceCounts[order.serviceId] =
-            serviceCounts[order.serviceId]! + 1;
-      }
-    }
-
-    final int totalOrders = orders.length;
-
-    // Sort services from most used to least used.
-    final List<LaundryService> sortedServices =
-        List<LaundryService>.from(services);
-
-    sortedServices.sort(
-      (a, b) {
-        final int countA = serviceCounts[a.serviceId] ?? 0;
-        final int countB = serviceCounts[b.serviceId] ?? 0;
-
-        return countB.compareTo(countA);
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.receipt_long_outlined),
+                  label: 'Orders',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.inventory_2_outlined),
+                  label: 'Inventory',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.swap_horiz_rounded),
+                  label: 'Transactions',
+                ),
+                BottomNavigationBarItem(
+                  icon: Icon(Icons.menu_rounded),
+                  label: 'More',
+                ),
+              ],
+            ),
+          ),
+        );
       },
     );
 
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ----------------------------------------------------------
-            // TITLE
-            // ----------------------------------------------------------
-
-            Row(
-              children: [
-                const Icon(
-                  Icons.pie_chart,
-                  size: 28,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (kIsWeb || constraints.maxWidth > 500) {
+          return Container(
+            color: isDark ? const Color(0xFF020617) : const Color(0xFFE2E8F0),
+            child: Center(
+              child: ConstrainedBox(
+                constraints: const BoxConstraints(
+                  maxWidth: 440,
+                  maxHeight: 920,
                 ),
-
-                const SizedBox(width: 10),
-
-                const Text(
-                  'Orders by Service',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 20),
-
-            // ----------------------------------------------------------
-            // NO ORDERS
-            // ----------------------------------------------------------
-
-            if (totalOrders == 0)
-              const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(20),
-                  child: Text(
-                    'No orders available yet.',
-                    style: TextStyle(
-                      color: Colors.grey,
-                    ),
-                  ),
-                ),
-              ),
-
-            // ----------------------------------------------------------
-            // SERVICE LIST
-            // ----------------------------------------------------------
-
-            if (totalOrders > 0)
-              ...sortedServices.map(
-                (service) {
-                  final int count =
-                      serviceCounts[service.serviceId] ?? 0;
-
-                  final double percentage =
-                      count / totalOrders;
-
-                  return Padding(
-                    padding: const EdgeInsets.only(
-                      bottom: 16,
-                    ),
-                    child: Column(
-                      crossAxisAlignment:
-                          CrossAxisAlignment.start,
-                      children: [
-                        Row(
-                          children: [
-                            Expanded(
-                              child: Text(
-                                service.serviceName,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-
-                            Text(
-                              '$count orders',
-                              style: const TextStyle(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-
-                            const SizedBox(width: 8),
-
-                            SizedBox(
-                              width: 45,
-                              child: Text(
-                                '${(percentage * 100).toStringAsFixed(0)}%',
-                                textAlign: TextAlign.right,
-                                style: TextStyle(
-                                  color: Colors.grey.shade600,
-                                  fontSize: 12,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-
-                        const SizedBox(height: 7),
-
-                        // Progress bar
-                        ClipRRect(
-                          borderRadius:
-                              BorderRadius.circular(10),
-                          child: LinearProgressIndicator(
-                            value: percentage,
-                            minHeight: 10,
-                          ),
-                        ),
-                      ],
-                    ),
-                  );
-                },
-              ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ======================================================================
-// REVENUE CARD
-// ======================================================================
-
-class _RevenueCard extends StatelessWidget {
-  final List<double> weeklyRevenue;
-  final double totalRevenue;
-  final DateTime startOfWeek;
-
-  const _RevenueCard({
-    required this.weeklyRevenue,
-    required this.totalRevenue,
-    required this.startOfWeek,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    double maxRevenue = 0;
-
-    for (final amount in weeklyRevenue) {
-      if (amount > maxRevenue) {
-        maxRevenue = amount;
-      }
-    }
-
-    if (maxRevenue == 0) {
-      maxRevenue = 1;
-    }
-
-    const List<String> dayLabels = [
-      'Mon',
-      'Tue',
-      'Wed',
-      'Thu',
-      'Fri',
-      'Sat',
-      'Sun',
-    ];
-
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(18),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                const Icon(
-                  Icons.bar_chart,
-                  size: 28,
-                ),
-
-                const SizedBox(width: 10),
-
-                const Text(
-                  'Revenue',
-                  style: TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                  ),
-                ),
-
-                const Spacer(),
-
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 7,
-                  ),
+                child: Container(
                   decoration: BoxDecoration(
-                    borderRadius: BorderRadius.circular(20),
-                    border: Border.all(
-                      color: Colors.grey.shade300,
-                    ),
-                  ),
-                  child: const Text(
-                    'This Week',
-                    style: TextStyle(
-                      fontWeight: FontWeight.w600,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-
-            const SizedBox(height: 18),
-
-            Text(
-              '₱${totalRevenue.toStringAsFixed(2)}',
-              style: const TextStyle(
-                fontSize: 30,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-
-            const SizedBox(height: 4),
-
-            const Text(
-              'Total Revenue This Week',
-              style: TextStyle(
-                color: Colors.grey,
-              ),
-            ),
-
-            const SizedBox(height: 25),
-
-            SizedBox(
-              height: 180,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: List.generate(
-                  7,
-                  (index) {
-                    final double amount =
-                        weeklyRevenue[index];
-
-                    final double barHeight =
-                        amount == 0
-                            ? 4
-                            : (amount / maxRevenue) * 120;
-
-                    return Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 4,
+                    color: pageBg,
+                    borderRadius: BorderRadius.circular(kIsWeb ? 20 : 0),
+                    boxShadow: [
+                      if (kIsWeb)
+                        BoxShadow(
+                          color: Colors.black
+                              .withValues(alpha: isDark ? 0.35 : 0.12),
+                          blurRadius: 24,
+                          offset: const Offset(0, 8),
                         ),
-                        child: Column(
-                          mainAxisAlignment:
-                              MainAxisAlignment.end,
-                          children: [
-                            if (amount > 0)
-                              Text(
-                                '₱${amount.toStringAsFixed(0)}',
-                                style: const TextStyle(
-                                  fontSize: 10,
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-
-                            const SizedBox(height: 5),
-
-                            Container(
-                              height: barHeight,
-                              decoration: BoxDecoration(
-                                borderRadius:
-                                    const BorderRadius.vertical(
-                                  top: Radius.circular(6),
-                                ),
-                                color: Theme.of(context)
-                                    .colorScheme
-                                    .primary,
-                              ),
-                            ),
-
-                            const SizedBox(height: 7),
-
-                            Text(
-                              dayLabels[index],
-                              style: const TextStyle(
-                                fontSize: 11,
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    );
-                  },
+                    ],
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: dashboardContent,
                 ),
               ),
             ),
-
-            const SizedBox(height: 8),
-
-            Text(
-              '${_formatDate(startOfWeek)} - '
-              '${_formatDate(startOfWeek.add(
-                const Duration(days: 6),
-              ))}',
-              style: TextStyle(
-                fontSize: 12,
-                color: Colors.grey.shade600,
-              ),
-            ),
-          ],
-        ),
-      ),
+          );
+        }
+        return dashboardContent;
+      },
+    );
+      },
     );
   }
 
-  String _formatDate(DateTime date) {
-    return '${date.month}/${date.day}';
-  }
-}
+  Widget _buildStatCard({
+    required IconData icon,
+    required Color iconColor,
+    required Color iconBg,
+    required String title,
+    required String value,
+    required String badgeText,
+    required Color badgeColor,
+    VoidCallback? onTap,
+  }) {
+    final colors = ThemeController.of(context);
+    final textDark = colors.textPrimary;
+    final borderColor = colors.border;
+    final cardBg = colors.cardBg;
+    final isDark = colors.isDark;
 
-// ======================================================================
-// STATISTICS CARD
-// ======================================================================
-
-class _StatCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String value;
-
-  const _StatCard({
-    required this.icon,
-    required this.title,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(14),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              icon,
-              size: 30,
-            ),
-
-            const SizedBox(height: 8),
-
-            Text(
-              title,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-
-            const SizedBox(height: 4),
-
-            Text(
-              value,
-              style: const TextStyle(
-                fontSize: 26,
-                fontWeight: FontWeight.bold,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-// ======================================================================
-// QUICK ACCESS CARD
-// ======================================================================
-
-class _DashboardCard extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final VoidCallback onTap;
-
-  const _DashboardCard({
-    required this.icon,
-    required this.title,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Card(
+    return Material(
+      color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Padding(
-          padding: const EdgeInsets.all(16),
+        borderRadius: BorderRadius.circular(16),
+        child: Ink(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: cardBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: borderColor),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black
+                    .withValues(alpha: isDark ? 0.2 : 0.02),
+                blurRadius: 8,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
           child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
             mainAxisAlignment: MainAxisAlignment.center,
             children: [
-              Icon(
-                icon,
-                size: 40,
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: iconBg,
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(icon, color: iconColor, size: 20),
+                  ),
+                  Text(
+                    value,
+                    style: TextStyle(
+                      fontSize: 22,
+                      fontWeight: FontWeight.bold,
+                      color: textDark,
+                    ),
+                  ),
+                ],
               ),
-
-              const SizedBox(height: 12),
-
+              const SizedBox(height: 8),
               Text(
                 title,
-                style: const TextStyle(
-                  fontSize: 16,
+                style: TextStyle(
+                  fontSize: 12,
                   fontWeight: FontWeight.bold,
+                  color: textDark,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                badgeText,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w600,
+                  color: badgeColor,
                 ),
               ),
             ],
@@ -994,61 +976,189 @@ class _DashboardCard extends StatelessWidget {
       ),
     );
   }
-}
 
-class _InventoryStat extends StatelessWidget {
-  final IconData icon;
-  final String title;
-  final String value;
+  Widget _buildInventoryBox({
+    required IconData icon,
+    required Color iconColor,
+    required Color iconBg,
+    required String value,
+    required String label,
+    VoidCallback? onTap,
+  }) {
+    final colors = ThemeController.of(context);
+    final textDark = colors.textPrimary;
+    final textMuted = colors.textSecondary;
 
-  const _InventoryStat({
-    required this.icon,
-    required this.title,
-    required this.value,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Theme.of(context)
-            .colorScheme
-            .surfaceContainerHighest
-            .withValues(alpha: 0.45),
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        onTap: onTap,
         borderRadius: BorderRadius.circular(12),
+        child: Ink(
+          padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+          decoration: BoxDecoration(
+            color: iconBg.withValues(alpha: 0.4),
+            borderRadius: BorderRadius.circular(12),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(
+                  color: iconBg,
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, color: iconColor, size: 18),
+              ),
+              const SizedBox(height: 6),
+              Text(
+                value,
+                style: TextStyle(
+                  fontSize: 18,
+                  fontWeight: FontWeight.bold,
+                  color: textDark,
+                ),
+              ),
+              const SizedBox(height: 2),
+              Text(
+                label,
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 11,
+                  color: textMuted,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildOrdersByServiceCard({
+    required List<LaundryOrder> orders,
+    required List<LaundryService> services,
+  }) {
+    final colors = ThemeController.of(context);
+    final textDark = colors.textPrimary;
+    final textMuted = colors.textSecondary;
+    final primaryBlue = colors.primary;
+    final borderColor = colors.border;
+    final cardBg = colors.cardBg;
+
+    final Map<String, int> serviceCounts = {};
+    for (final service in services) {
+      serviceCounts[service.serviceId] = 0;
+    }
+    for (final order in orders) {
+      if (serviceCounts.containsKey(order.serviceId)) {
+        serviceCounts[order.serviceId] = serviceCounts[order.serviceId]! + 1;
+      }
+    }
+    final int totalOrders = orders.length;
+
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        color: cardBg,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: borderColor),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Icon(
-            icon,
-            size: 22,
-          ),
-
-          const SizedBox(height: 8),
-
           Text(
-            value,
-            style: const TextStyle(
-              fontSize: 22,
-              fontWeight: FontWeight.bold,
-            ),
-          ),
-
-          const SizedBox(height: 2),
-
-          Text(
-            title,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
+            'Orders by Service',
             style: TextStyle(
-              fontSize: 12,
-              color: Colors.grey.shade600,
+              fontSize: 16,
+              fontWeight: FontWeight.bold,
+              color: textDark,
             ),
           ),
+          const SizedBox(height: 16),
+          if (services.isEmpty)
+            Text(
+              'No services configured.',
+              style: TextStyle(color: textMuted, fontSize: 13),
+            )
+          else
+            ...services.map((service) {
+              final int count = serviceCounts[service.serviceId] ?? 0;
+              final double percentage =
+                  totalOrders > 0 ? count / totalOrders : 0;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: Column(
+                  children: [
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Text(
+                          service.serviceName,
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w600,
+                            color: textDark,
+                          ),
+                        ),
+                        Text(
+                          '$count orders (${(percentage * 100).toStringAsFixed(0)}%)',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: textMuted,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(4),
+                      child: LinearProgressIndicator(
+                        value: percentage,
+                        minHeight: 8,
+                        backgroundColor: const Color(0xFFE2E8F0),
+                        valueColor: AlwaysStoppedAnimation<Color>(
+                          primaryBlue,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
         ],
       ),
     );
+  }
+
+  String _formatHeaderDate(DateTime date) {
+    const days = [
+      'Monday',
+      'Tuesday',
+      'Wednesday',
+      'Thursday',
+      'Friday',
+      'Saturday',
+      'Sunday'
+    ];
+    const months = [
+      'Jan',
+      'Feb',
+      'Mar',
+      'Apr',
+      'May',
+      'Jun',
+      'Jul',
+      'Aug',
+      'Sep',
+      'Oct',
+      'Nov',
+      'Dec'
+    ];
+    final dayName = days[date.weekday - 1];
+    final monthName = months[date.month - 1];
+    return '$monthName ${date.day}, ${date.year} • $dayName';
   }
 }

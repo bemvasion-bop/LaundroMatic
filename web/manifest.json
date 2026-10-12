@@ -1,11 +1,11 @@
 {
-    "name": "laundromatic",
-    "short_name": "laundromatic",
+    "name": "LaundroMatic",
+    "short_name": "LaundroMatic",
     "start_url": ".",
     "display": "standalone",
-    "background_color": "#0175C2",
-    "theme_color": "#0175C2",
-    "description": "A new Flutter project.",
+    "background_color": "#F7FAFE",
+    "theme_color": "#1E64D4",
+    "description": "LaundroMatic - Laundry Management System",
     "orientation": "portrait-primary",
     "prefer_related_applications": false,
     "icons": [
